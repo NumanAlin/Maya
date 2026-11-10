@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Maya</title>
+<style>
+:root{--bg:#faf9f5;--fg:#1f1e1d;--mut:#6b6a66;--card:#fff;--line:#e4e2da;--acc:#c96442;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#1f1e1d;--fg:#f3f1ea;--mut:#a3a29c;--card:#2a2928;--line:#3d3c39;--acc:#e08a6b;color-scheme:dark}}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:520px;margin:0 auto;padding:24px 20px;text-align:center}
+h1{font-size:28px;margin:8px 0 4px}
+p.sub{color:var(--mut);margin:0 0 16px}
+#orb{width:120px;height:120px;border-radius:50%;margin:20px auto;border:3px solid var(--line);background:var(--card);display:flex;align-items:center;justify-content:center;font-size:40px;transition:.2s}
+#orb.on{border-color:var(--acc)}
+#orb.hear{background:var(--acc);box-shadow:0 0 0 12px color-mix(in srgb,var(--acc) 25%,transparent)}
+button,select,input{font:inherit;padding:12px 18px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);max-width:100%;box-sizing:border-box}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+#st{color:var(--mut);min-height:24px;margin:8px 0}
+#key{width:100%;margin-bottom:8px}
+#setup{margin-bottom:16px}
+#setup a{color:var(--acc)}
+#log{text-align:left;margin-top:20px;display:flex;flex-direction:column;gap:10px}
+.m{padding:10px 14px;border-radius:12px;background:var(--card);border:1px solid var(--line);overflow-wrap:anywhere}
+.m b{display:block;font-size:12px;color:var(--mut);font-weight:500}
+</style>
+</head>
+<body>
+<main>
+<h1>Maya</h1>
+<p class="sub">Say “Maya” and I’ll wake up. Keep this page open with the screen on.</p>
+<div id="setup">
+<input id="key" type="password" placeholder="Paste your Gemini API key" autocomplete="off">
+<div><button id="save">Save key</button></div>
+<p class="sub" style="margin-top:8px">Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a>. It is stored only on this phone.</p>
+</div>
+<div id="orb">🎙️</div>
+<div id="st">Add your key, then tap Start.</div>
+<p><select id="lang"><option value="en-US">English</option><option value="bn-BD">বাংলা</option></select>
+<button id="go" class="p">Start</button></p>
+<div id="log"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const orb=$('orb'),st=$('st'),log=$('log'),go=$('go'),langSel=$('lang'),keyEl=$('key'),setup=$('setup');
+const MODEL='gemini-2.5-flash';
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec,running=false,busy=false,awaiting=false,awaitTimer,ignoreUntil=0,wake=null,KEY='';
+try{KEY=localStorage.getItem('maya_key')||'';}catch(e){}
+if(KEY){setup.style.display='none';}
+
+$('save').onclick=()=>{KEY=keyEl.value.trim();if(!KEY)return;
+ try{localStorage.setItem('maya_key',KEY);}catch(e){}
+ keyEl.value='';setup.style.display='none';status('Key saved. Tap Start.');};
+
+function add(who,text){const d=document.createElement('div');d.className='m';
+ const b=document.createElement('b');b.textContent=who;d.append(b,document.createTextNode(text));log.prepend(d);}
+function status(t){st.textContent=t;}
+function speak(text){return new Promise(res=>{
+ try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);
+  u.lang=/[\u0980-\u09FF]/.test(text)?'bn-BD':langSel.value;
+  u.onend=u.onerror=()=>{ignoreUntil=Date.now()+1200;res();};speechSynthesis.speak(u);}catch(e){res();}});}
+
+async function ask(q){
+ busy=true;awaiting=false;clearTimeout(awaitTimer);orb.classList.remove('hear');
+ add('You',q);status('Thinking…');
+ let ans;
+ try{
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODEL+':generateContent?key='+encodeURIComponent(KEY),{
+   method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({
+    systemInstruction:{parts:[{text:'You are Maya, a voice assistant. Answer precisely in at most 3 short plain sentences. No markdown, no lists. Reply in the same language as the question.'}]},
+    contents:[{role:'user',parts:[{text:q}]}]})});
+  if(r.status===400||r.status===403){ans='Your API key looks invalid. Please check it.';}
+  else if(r.status===429){ans='I am being rate limited. Please wait a minute.';}
+  else if(!r.ok){ans='Sorry, something went wrong.';}
+  else{const j=await r.json();
+   ans=(j.candidates&&j.candidates[0]&&j.candidates[0].content.parts.map(p=>p.text||'').join(' '))||'Sorry, I have no answer.';
+   ans=ans.replace(/[*#`_]/g,'').trim();}
+ }catch(e){ans='I could not reach the internet.';}
+ add('Maya',ans);status('Speaking…');
+ await speak(ans);busy=false;status('Listening for “Maya”…');
+}
+
+async function onText(t){
+ if(busy||Date.now()<ignoreUntil)return;
+ if(awaiting){return ask(t);}
+ const m=t.toLowerCase().match(/\b(maya|maia|mayah|miya|মায়া)\b[\s,.:!?-]*([\s\S]*)$/);
+ if(!m)return;
+ const rest=m[2].trim();
+ orb.classList.add('hear');busy=true;
+ await speak('Yes boss');busy=false;
+ if(rest){ask(rest);}
+ else{awaiting=true;status('Yes boss. Go ahead…');
+  awaitTimer=setTimeout(()=>{awaiting=false;orb.classList.remove('hear');status('Listening for “Maya”…');},10000);}
+}
+
+async function start(){
+ if(!KEY){setup.style.display='';status('Add your Gemini key first.');return;}
+ if(!SR){status('This browser has no speech recognition. Use Chrome.');return;}
+ rec=new SR();rec.continuous=true;rec.interimResults=false;rec.lang=langSel.value;
+ rec.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)onText(e.results[i][0].transcript);}};
+ rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){running=false;go.textContent='Start';orb.classList.remove('on');
+  status('Microphone blocked. Allow it for this site in Chrome settings.');}};
+ rec.onend=()=>{if(running){try{rec.start();}catch(e){}}};
+ running=true;try{rec.start();}catch(e){}
+ try{wake=await navigator.wakeLock.request('screen');}catch(e){}
+ orb.classList.add('on');go.textContent='Stop';status('Listening for “Maya”…');
+}
+function stop(){running=false;try{rec.stop();}catch(e){}try{wake&&wake.release();}catch(e){}
+ speechSynthesis.cancel();orb.classList.remove('on','hear');go.textContent='Start';status('Stopped.');}
+go.onclick=()=>{running?stop():start();};
+langSel.onchange=()=>{if(running){stop();start();}};
+</script>
+</body>
+</html>
